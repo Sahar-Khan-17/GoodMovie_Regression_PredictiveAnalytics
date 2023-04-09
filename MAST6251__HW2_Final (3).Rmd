@@ -1,0 +1,875 @@
+---
+title: "MAST 6251 - HW 2"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-02-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+Group Members: Kinnera Puppala, Sumita Nair, Sahar Khan, Ganesh Nimmala, Varun Gokhale, Harsh Tandel
+
+**Introduction**
+
+The primary aim of this analysis was to identify and report important factors from the ‘Full MovieLens’ dataset that contribute to determine whether a given movie is considered ‘good’ or ‘bad’. Given that the dataset had over 10 data points, it was important to identify the key data points from the cohort that have a higher influence on a movie’s success, when compared to others. The first step in that process was data cleaning and manipulation which allowed us to have a better understanding of the data. Furthermore, identifying a key set of data points allowed us to compare them with user ratings data (acquired from the official GroupLens website) and helped set a narrative for this report.
+
+The data points that we selected as a base factor in determining whether a movie is considered good or bad were user-ratings and revenue. Our definition of a ‘good’ movie is a movie that has a rating score of 6 or higher and a verdict set to 1 for such movies. Any movies with a rating score lower than 6 are ‘bad’ movies and a verdict is set to 0 for those. We also considered the effects of other data points in the dataset that contribute to a poor rating score and hence classify a movie as ‘bad’. These data points include, but are not limited to, movie meta data such as the director, production house, runtime, and popularity. Also, including the associated data points and their effect on ratings score helped us in building a robust model for predicting whether a movie was ‘good’ or ‘bad’. All the other data points are compared to our base data points in determining which factors have the most influence on a movie’s rating score.
+
+
+
+```{r echo=FALSE}
+
+#Data Cleaning
+library(reticulate)
+#Run only once to install
+#py_install("pandas")
+#py_install("numpy")
+#py_install("matplotlib")
+#py_install("seaborn")
+
+```
+```{python include=FALSE}
+import pandas as pd
+import numpy as np
+import seaborn as sns
+from ast import literal_eval
+from scipy.stats import norm
+import warnings; warnings.simplefilter('ignore')
+import matplotlib.pyplot as plt
+
+#Uploading all files in separate dataframes
+#'release_date' column should be parsed as a date data type and stored in the dataframe
+
+credits = pd.read_csv("C:/Users/SMU-Varun/Downloads/credits.csv")
+Links = pd.read_csv("C:/Users/SMU-Varun/Downloads/links.csv")
+meta_data = pd.read_csv("C:/Users/SMU-Varun/Downloads/movies_metadata.csv", parse_dates=['release_date'])
+rating = pd.read_csv("C:/Users/SMU-Varun/Downloads/ratings.csv")
+
+meta_data.shape
+meta_data.head()
+meta_data['belongs_to_collection'].count()
+
+#Checking the data to see if it can merged together
+meta_data.columns
+
+#Adding directors from the credits data frame
+#ids are in 'obj' type and in order to merge the dataframe, we need it in 'int' data type
+credits['id'] = credits['id'].astype('int')
+credits.head()
+
+#some id data fields have date values e.g.: 8/20/1997, checking those and removing all such rows
+meta_data = meta_data[meta_data.id !='1997-08-20'] 
+meta_data = meta_data[meta_data.id !='2012-09-29'] 
+meta_data = meta_data[meta_data.id !='2014-01-01']
+
+#merge
+meta_data['id'] = meta_data['id'].astype('int')
+meta_data = meta_data.merge(credits, on='id')
+meta_data.head()
+
+#literal_eval is used for extracting dict values within string i.e convert to list of dict, easier to manipulate during analysis
+meta_data['cast'] = meta_data['cast'].apply(literal_eval)
+meta_data['crew'] = meta_data['crew'].apply(literal_eval)
+
+#function for extracting only director's name
+def get_director(x):
+    for i in x:
+        if i['job'] == 'Director':
+            return i['name']
+    return np.nan
+
+#Extracting and seperating - director column (new created) in meta_data
+meta_data['director'] = meta_data['crew'].apply(get_director)
+
+#parsing through dictionary and represent cast member(key = name)in each row
+meta_data['cast'] = meta_data['cast'].apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
+
+#selecting top actors - limit the cast and reduce complexity (lambda checks the length)
+meta_data['cast'] = meta_data['cast'].apply(lambda x: x[:5] if len(x) >=5 else x)
+
+#removing space from cast and all in lower alphabets
+meta_data['cast'] = meta_data['cast'].apply(lambda x: [str.lower(i.replace(" ", "")) for i in x])
+
+#saving 5 director names
+meta_data['director'] = meta_data['director'].astype('str').apply(lambda x: str.lower(x.replace(" ", "")))
+meta_data['director'] = meta_data['director'].apply(lambda x: [x])
+
+#Removing crew since director data is extracted
+meta_data = meta_data.drop('crew', axis = 1)
+meta_data.head()
+
+#Data Structuring and Organizing (meta_data)
+#There are couple of variables that may not have use in our analysis. So we will be removing them.
+#Checking which columns to remove
+
+meta_data['adult'].value_counts()  #removing since majority false, not useful
+#Removing imdb_id since movie id is already available
+
+#check original_language
+meta_data['original_language'].value_counts()  #five languages. Check if need to keep them all or just english
+
+#original_title (title is present), spoken_languages also need to be removed
+#checking status
+meta_data['status'].value_counts() # Considering and simplifying status to released = 45087 majority
+
+#video means if dvd/cd or video version of that movie is released or not. it may add into as an additionally variable, results of which will interfer with model
+meta_data['video'].value_counts() #take all that is false and remove true rows
+
+#columns to remove : 'adult' , 'imdb_id', 'homepage', 'original_title', 'spoken_languages', 'tagline'
+#Copying Useful Variables from meta_data dataframe to movies dataframe
+movies = meta_data.drop(['adult' , 'imdb_id', 'homepage', 'original_title', 'overview', 'poster_path',
+                         'spoken_languages', 'tagline'], axis = 1)
+
+print(movies.head())
+movies.describe()
+#what are the top 5 languages
+movies['original_language'].value_counts()
+
+#columns to select majority values : 'original_language': top 5 languages , 'status': released, 'video' : False, 'belongs_to_collection
+
+#selecting only top 5 Languages, rest all are 1
+movies = movies[movies['original_language'].isin(['en', 'fr', 'it','ja','de'])]
+
+#status = released 
+movies = movies[movies['status'] == 'Released']
+
+#Removing Trilogies, since individual movies are also in dataset
+movies = movies[movies['video'] == False]
+
+#removing all these worked out columns
+#Keeping belongs_to_collection for now
+#'original_language': top 5 languages , 'status': released, 'video' : False, 'belongs_to_collection'
+movies.drop(['original_language','status','video'], axis = 1, inplace = True)
+movies.head()
+
+#Extracting Data from Long Strings in column values Columns to work on:
+#'belongs_to_collection', 'genres', 'production_companies', 'production_countries', year from 'release_date'
+#release_year from release_date
+movies['release_year'] = pd.DatetimeIndex(movies['release_date']).year
+movies.head(2)
+
+#Getting float value for years, so..  #errors = 'ignore', in case of missing values it will ignore them
+movies['release_year'] = movies['release_year'].astype('Int64', errors='ignore')
+movies.head(2)
+
+#Extracting Useful Variables from JSON Strings
+#extracting genres
+movies.genres[0:5][0]
+
+#extract and separate genres
+movies['genres'] = movies['genres'].fillna('[]').apply(literal_eval).apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
+movies.head(2)
+
+#production_companies
+movies['production_companies'] = movies['production_companies'].fillna('[]').apply(literal_eval).apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
+movies['production_companies'] = movies['production_companies'].apply(lambda x: x[:1] if len(x) >=1 else x)
+
+movies['production_countries'] = movies['production_countries'].fillna('[]').apply(literal_eval).apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
+movies['production_countries'] = movies['production_countries'].apply(lambda x: x[:1] if len(x) >=1 else x)
+movies.head(2)
+
+#converting belongs_to_collection to bool 1 & 0. If collection = 1 else 0
+movies['belongs_to_collection'] = (movies['belongs_to_collection'].isna()).astype(int)
+movies.head()
+
+#checking missing values in data 
+movies.isna().sum()
+
+#since these are small values, we can remove these rows
+movies.dropna(inplace = True)
+movies.isna().sum()
+
+#checking stats for outliers in continuous values
+movies[['budget','popularity','revenue','runtime','vote_average','vote_count']].agg(['std','min','mean','max','skew','kurtosis'])
+
+#there are some dodgy values or outliers to resolve in popularity, budget, runtime, vote_count
+#start from popularity to check what values do we have and their type
+(movies['popularity'].values)
+
+#The values in popularity column have messed up data types. We see some float and some are string. We need to make all numerical values to be float
+movies['popularity'] = movies['popularity'].astype("float")
+print(movies['popularity'].values)
+
+#checking popularity scale now
+movies['popularity'].describe()  # it's from zero to 547 with mean 6.92
+
+#lets check out these super popular movies with a 547.488 score
+movies[movies['popularity']> 35]  
+#there are small number of movies above that popularity (40).
+#so instead of making them outliers, set them all to 40
+#all of them are popular, renowned movies
+
+#lower and upper bounds of a confidence interval 
+movies.popularity.mean() - movies.popularity.std() * 2, movies.popularity.mean() + movies.popularity.std() * 2
+
+#setting all movies with popularity above 35 to 35
+movies[movies['popularity'] > movies['popularity'].quantile(0.997)] = 35  #int(movies['popularity'].quantile(0.997))
+movies.popularity.describe()
+
+#lets look into next column: budget
+movies['budget'].value_counts()
+
+#30K+ zeroes out of 45K data
+#same problem and hence same solution
+movies['budget'] = movies['budget'].astype(float)
+#int because huge numerical values. no need to burden memory by using float here
+print(movies['budget'].values)
+
+#Now, there is possibility to create a movie with 0 budget, but not in real world so we have to look into this problem. 
+movies['budget'].describe() #check which movies have budget 0
+
+#checking our 2std or outlier range-lower and upper bounds of a confidence interval 
+movies.budget.mean() - (2 * movies.budget.std()) , movies.budget.mean() + 2 * movies.budget.std()
+
+#The budget values in these records are not true which I checked online. The budget for them is not zero. So we may have to remove them from our record. (Check home Alone 4 and The human Centipede 2)
+#movies['budget'] = movies[movies['budget'] < 1 ]
+movies = movies[movies['budget'] > 1] 
+movies.head()
+
+sns.distplot(x = movies.budget, kde = True, fit = norm)
+plt.show()
+
+#Removing Budget here
+movies = movies.drop('budget', axis = 1)
+movies.head()
+
+#check column: runtime. it seems fine but lets check it
+movies['runtime'].describe()
+movies[[ 'runtime','vote_average','vote_count']].agg(['std','min','mean','max','skew','kurtosis'])
+
+#there are movies that are longer than 3 hours and max is 476 min (~8 hours), checking that
+#also, a movie is also zero minute which is obviously not a movie but an outlier
+movies = movies[movies['runtime'] > 30]
+movies['runtime'].describe()
+
+#usually a movie is within 180 min or 3 hours. lets allow more liberty to older movies to have more than that time
+#lets see if a movie is longer than 3.5 hours or 60*3.5 = 210
+movies[movies['runtime'] > 240]
+
+#Leviathan: The Story of Hellraiser and Hellbound: Hellraiser II has runtime : 476 min
+#and its true, I verified it online on imdb and this cant be taken as outlier
+#and same is true for some other movies too. data is correct and we cant take them as outlier
+#lets see distribution of runtime and figure out something from there
+sns.distplot(movies['runtime'].values)
+plt.show()
+
+from scipy.stats import norm
+ax = sns.distplot(movies['runtime'], fit=norm, kde=False)
+plt.show()
+
+#we will probably need to put a cut off limit at 200, since 99.7% (3*std) of data lies within 30 to 190 min
+movies = movies[movies['runtime'] < 240]
+movies['runtime'].describe()
+
+#Checking vote_average
+movies['vote_average'].describe()
+
+#checking vote_count
+movies['vote_count'].describe()
+
+print(movies['revenue'].describe())
+#removing outlier in this one
+#checking dist of it
+sns.distplot(movies['revenue'], fit = norm, kde = False) #left skewed
+plt.show()
+
+#the results of revenue col  are lot of values around 0 . lets check data limits/range
+movies['revenue'].mean() - (2 * movies['revenue'].std()) , movies['revenue'].mean() + (2 * movies['revenue'].std())
+movies[movies.revenue < 1]['revenue'].count()  # 2800+ values are zeros
+
+movies = movies[movies.revenue > 1000000]
+#dropping revenues
+
+#removed all rows where budget was zero
+movies.revenue.describe()  #Now ok
+
+#Checking Outliers Again
+#checking stats for outliers in continuous values
+movies[['popularity','revenue','runtime','vote_average','vote_count']].agg(['std','min','mean','max','skew','kurtosis'])
+movies.head()
+
+#Feature Engineering
+#Opening Up List with Single Values
+#production_companies , production_countries and director
+movies.production_companies = movies.production_companies.str[0]
+movies.production_countries = movies.production_countries.str[0]
+movies.director = movies.director.str[0]
+movies.head(10)
+
+#Creating New Column Called cast_score (Based on Number of famous Actors in a Movie)
+#list of actors
+actors = ['tomhanks', 'alpacino','robertdeniro','leonardodicaprio','jimcarrey','brucewillis',
+         'johnnydepp','bradpitt','clinteastwood','willsmith','denzelwashington','tomcruise',
+         'nicolascage','keanureeves','danielday-lewis','anthonyhopkins','robinwilliams','morganfreeman',
+         'christianbale','hughjackman','mattdamon','woodyallen','jacknicholson','marlonbrando','dustinhoffman',
+         'paulnewman','spencertracy','jacklemmon','michaelcaine','jamesstewart','robertduvall','seanpenn',
+         'jeffbridges','genehackman','charleschaplin','benkingsley','russelcrowe','kevinspacey',
+         'tommyleejones','seanconnery','christopherwalken','heathledger','jamiefoxx','joaquinphoenix',
+         'colinfirth','matthewmcconaughey','garyoldman','edwardnorton','robertdowneyjr','liamneeson','melgibson',
+         'harrisonford','samueljackson','benaffleck','ryangosling','ryanreynolds','jenniferlawrence','scarlettjohansson',
+         'cateblanchett','jenniferaniston','galgadot','salmahayek','katewinslet','angelinjolie','annehathaway',
+         'melissamccarthy','jackiechan','willferrell','dwaynejohnson','vandiesel','chadwickboseman']
+         
+#extract match count
+def match_count(hero):
+    if hero in actors:
+        return 1
+    else: 
+        return 0
+      
+#copying movie data for experiments
+cast_mv = movies.copy() 
+cast_mv['cast_score'] = [0] * cast_mv.shape[0] #new col, initial value=0
+
+#For each row, it calculates the length of the "cast". The match_count function is called on each element of the "cast" column and the result is added to the "cast_score" for the corresponding row. The value in the "cast_score" column is updated using the at method of the data frame
+for index,row in cast_mv.iterrows():
+    length = len((row['cast']))
+    for i in range(length):
+        val = match_count((row['cast'][i]))
+        cast_mv.at[index, 'cast_score' ] += val
+        
+cast_mv.cast_score.value_counts()
+cast_mv.isna().sum()
+
+#For Directors, creating director score (same process as above)
+#We will create binary column telling us if a movie has a renonwed director or not
+
+#directors =[]
+cast_mv[cast_mv.director == 'paulthomasanderson']
+directors =['ridleyscott','clinteastwood','martinscorsese','paulthomasanderson','davidfincher','joelcoen',
+           'davidlynch','christophernolan','alexanderpayne','michaelhaneke','stevenspielberg','romanpolanski',
+           'peterjackson','anglee','quentintarantino','darrenaronofsky','davidcronenberg','larsvontrier','mikeleigh',
+           'jamescameron','dannyboyle','woodyallen']
+           
+def director_match(drc):
+    if drc in directors:
+        return 1
+    else:
+        return 0
+      
+cast_mv['director_score'] = [0] * cast_mv.shape[0]
+
+for index,row in cast_mv.iterrows():
+    v = director_match(row['director'])
+    cast_mv.at[index, 'director_score' ] += v
+       
+cast_mv['director_score'].value_counts()
+
+#Production Company Score
+#For big production houses, we will assign 1 and for smaller 0
+companies =['Warner Bros','Sony Pictures Animation','Sony Pictures Entertainment','Walt Disney','Universal Pictures',
+           'Walt Disney Animation Studios','Walt Disney Pictures','Twentieth Century Fox Animation','Columbia Pictures',
+           'Universal Pictures', 'Twentieth Century Fox Film Corporation','DreamWorks Animation','Miramax Films','Pixar Animation Studios',
+           'DreamWorks SKG','DC Entertainment']
+           
+def company_match(c):
+    if c in companies:
+        return 1
+    else:
+        return 0
+      
+cast_mv['production_score'] = [0] * cast_mv.shape[0]
+
+for index,row in cast_mv.iterrows():
+    v = company_match(row['production_companies'])
+    cast_mv.at[index, 'production_score' ] += v
+cast_mv.head(2)
+
+#One Hot Encoding are character/factor/categorical variables
+#gen_movies.genres.values
+gen_movies = cast_mv.copy()
+#try is for one hot encoding to check
+for index,row in gen_movies.iterrows():
+    for genre in row.genres:
+        gen_movies.at[index, genre] = 1
+        print(gen_movies.at[index,genre])
+gen_movies=gen_movies.fillna(0)
+
+gen_movies = cast_mv.copy()
+
+#try is for one hot encoding to check
+for index,row in gen_movies.iterrows():
+    for genre in row.genres:
+        gen_movies.at[index, genre] = 1
+        print(gen_movies.at[index,genre])
+gen_movies=gen_movies.fillna(0)
+
+gen_movies=gen_movies.fillna(0)
+gen_movies.head()
+cast_mv = gen_movies.copy()
+
+#Creating Our Y Variable: Weighted Rating
+#𝑊𝑒𝑖𝑔ℎ𝑡𝑒𝑑𝑅𝑎𝑡𝑖𝑛𝑔(𝑊𝑅)=(𝑣/(𝑣+𝑚).𝑅)+(𝑚/(𝑣+𝑚).𝐶) 
+#where,
+#v is the number of votes for the movie
+#m is the minimum votes required to be listed in the chart. We will keep 99.7% of values (3 * std)
+#R is the average rating of the movie
+#C is the mean vote across the whole report
+
+#Convert datatype of cols: vote_count and vote_average into int 
+#and find m = minium votes required to be listed on chart. 
+#we will use 3 std values as we did above earlier
+m = cast_mv[cast_mv['vote_count'].notnull()]['vote_count'].astype('int').quantile(0.997)
+
+#and our mean of vote_average
+C = cast_mv[cast_mv['vote_average'].notnull()]['vote_average'].astype('int').mean()
+print("cut off value: ",m)
+print("Mean of vote_average column: ",C)
+
+def weighted_rating(x):
+    v = x['vote_count']
+    R = x['vote_average']
+    return (v/(v+m) * R) + (m/(m+v) * C)
+
+cast_mv['W_Rating'] = cast_mv.apply(weighted_rating, axis=1)
+cast_mv = cast_mv.sort_values('W_Rating', ascending=False)
+
+#Our rating and ranking will be based on this new col: W_Rating
+cast_mv.W_Rating.describe()
+
+#Final Cleaning
+#Removing all unwanted variables
+cast_mv.columns
+cast_mv = cast_mv.drop(['id','release_date','genres'] , axis = 1)  #production_countries, production_companies, dir
+
+cast_mv.to_csv("C:/Users/SMU-Varun/Downloads/final_cleaned_HW2 (1).csv")
+#rename the file (.csv) in the location to open it as csv
+```
+
+**Executive Summary**
+
+- In order to improve the potential for higher ratings, it is recommended that movies falling under the genres of Animation, Comedy, Action, History, and Science Fiction, which are at least 106 minutes in length and have top directors, top cast members, a popularity rating of 9 or greater, a revenue of at least 7 million, and have been released after 2003, should be selected. It should be noted that the Family, Drama, Action, and Documentary genres have the highest impact on revenue based on the Revenue model. As a result, selecting action movies could provide a good tradeoff for better value for money and a higher success rate between revenue and ratings.
+
+-	Despite the notion that only popular movies earn good revenue, it is important to note that some lesser-known movies, including critically acclaimed works and foreign language films with a specific audience, have also achieved substantial financial success.
+
+-	It is worth noting that a movie's number of votes does not necessarily reflect its rating. In many cases, movies with fewer votes have achieved high ratings, suggesting that a smaller but more dedicated audience can sometimes be a better indicator of a movie's quality.
+
+-	While it is generally true that popular movies tend to receive high ratings due to their wide viewership, it is important to recognize that not all popular movies are highly regarded by audiences. As such, a high rating may not always be indicative of a movie's quality or appeal to individual viewers.
+
+
+
+**Assumptions and Modifications**
+
+In order to analyze the dataset, we had to make certain assumptions and modifications that would streamline the findings and allow us to make an objective conclusion. The following assumptions and modifications were made based on our exploratory data analysis:
+
+*Ratings score:* The TMDB ratings scale had a range from 1 through 10, with 1 being the lowest rating possible and 10 being the highest rating possible. We rescaled the movie ratings into TMDB scale by calculating the weighted average rating for each movie. On the basis of these values, we set a ratings value of 6 as a threshold value. Any movie with a score of 6 and above was considered a ‘good’ movie and any with a lower score than 6 was a ‘bad’ movie.
+
+*Directors:* We also classified the Top 22 directors according to TMBD as ‘good’ directors when compared to the others in that list, who were classified as ‘bad’ directors.
+
+*Actors:* We also classified the Top 70 actors according to TMBD as ‘good’ actors when compared to the others in that list, who were classified as ‘bad’ actors.
+
+*Production Houses:* We also classified the Top 16 production houses according to TMBD as ‘good’ production houses when compared to the others in that list, who were classified as ‘bad’ production houses.
+
+*Movie Length:* Another assumption we made was based on the runtime of a movie. We assumed that any movie above 106 minutes in length was considered a ‘long’ movie and anything below that was a ‘short’ movie.
+
+```{r setup1, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r include=FALSE}
+options(repos = "https://cran.rstudio.com/")
+install.packages('plyr', repos = "http://cran.us.r-project.org")
+install.packages('fastDummies')
+library('fastDummies')
+library("dplyr")
+library('tidyr')
+library('car')
+library('tinytex')
+library('ggplot2')
+
+mvs=read.csv("C:/Users/SMU-Varun/Downloads/final_cleaned_HW2 (1).csv")
+head(mvs)
+```
+
+```{r echo=FALSE}
+#Our dependent variable of interest: revenue
+#Distribution of 'revenue'
+#quick and ugly (for the analyst)
+#ggplot(mvs,aes(x=revenue)) + geom_histogram(fill="dodgerblue") + theme_bw(15) + 
+#xlab("Total revenue") + ylab("No of movies")
+```
+
+```{r include=FALSE}
+#some manipulation done to put score at the bottom
+#How are the variables correlated with the rating?
+#ggcorr(bind_cols(mvs %>% select(revenue),mvs %>% select(-revenue)))
+#some manipulation done to put score at the bottom
+#From the correlation, we can understand that vote_count, vote_avg and popularity have a string positive correlation with revenue . That means , the more popular, the more votes counts and the higher the vote average is, the more likely the revenue is going to be. 
+
+#But here this correlation dos not simply mean causation. ie. even though revenue and vote_avg, vote counts and popularity have a positive correlation , it does not mean these are the things that lead to high revenue. It will be interesting to see them from further analysis.
+avg_rev = mean(mvs$revenue)
+avg_rev
+#Logistic: What is associated with a "good" revenue?
+# I took the avg revenue and took that as a base ( Research more on this ) 
+mvs = mvs %>% mutate(goodrev = (revenue >= 7000000)*1)
+```
+
+```{r include=FALSE}
+#An intercept only model
+logReg1 = glm(goodrev~1,mvs,family=binomial)
+int     = coef(logReg1)[1]
+exp(int)/(1+exp(int))
+mean(mvs$goodrev==1)
+#In an intercept only model, the intercept will lead to the mean prediction
+#If you take avg of all movies , and base is 7M then 84% of movies are giving higer than this revenue.... 
+#The value "0.8454897" itself is the coefficient for an intercept term in a statistical model. An intercept term is a constant value in a regression equation that represents the expected mean value of the dependent variable when all independent variables are equal to zero.
+#So, in this case, the value "0.8454897" is the estimated intercept coefficient for a regression model, indicating that when all independent variables are equal to zero, the expected value of the dependent variable is estimated to be 0.8454897.
+
+#What variables should we include? What is in our control?
+logReg2 = glm(goodrev ~ Animation+Comedy+Family+Adventure+Fantasy+Drama+Action
++Horror+Documentary+Western,mvs,family=binomial)
+summary(logReg2)
+#Looks like family,drama, action and documentary can have the biggest impact on revenue
+#Remember, these are all binary, so they are directly comparable
+
+#This means that, on average, a one-unit increase in the "Animation" variable is associated with a decrease in the response variable of 0.78262 units, and this effect is statistically significant (at a significance level of 0.05).
+
+#Similarly, the estimated coefficient for the "Family" variable is 1.45901, and the corresponding p-value is 4.15e-08 (which is less than 0.05). This means that, on average, a one-unit increase in the "Family" variable is associated with an increase in the revenue variable of 1.45901 units, and this effect is highly statistically significant (at a significance level of 0.05).
+
+#The intercept term, (Intercept), gives you the expected value of the revenue when all the predictor variables are equal to zero. In this case, the estimated intercept is 1.81231, which means that the expected value of the revenue when all the predictor variables are equal to zero is 1.81231.
+
+```
+
+```{r include=FALSE}
+#What is the average srevenue with/without family,drama, action and documentary ?
+mvs %>% select(revenue,Family,Drama,Action, Documentary) %>% group_by(Family, Drama,Action, Documentary) %>%
+  summarise(count = n(),
+            RevBar = mean(revenue))
+# Look, here the highest revenue yeilds from family only movies, but more counts are from Drama movies 
+# If we look at a combination, then family + action gives good revenue, but Drama + Action gives max count / views
+#Which movies are we looking at?
+mvs %>% filter(Family == 0 | Drama == 0 |Action==0) %>% select(title) %>% distinct()
+#Which movies are we looking at?
+mvs %>% filter(Horror == 0 | Adventure == 0 |Fantasy==0) %>% select(title) %>% distinct()
+
+# What can we interpret here ? That adventure, horror and fantasy movies are less likely to yield high revenue as they are limited to maybe, pwarticular age groups like Adventure/ Fantasy appeals more to young kids and horror to teenage / early 20s???? 
+```
+
+```{r include=FALSE}
+logReg3 = update(logReg2,. ~ . -Horror - Adventure -Fantasy - Comedy)
+summary(logReg3)
+#What about if we add the cast score and director_score?
+logReg4 = update(logReg3,. ~ . + cast_score + director_score)
+summary(logReg4)
+##What about the production_score?
+logReg5 = update(logReg4,. ~ . + production_score)
+summary(logReg5)
+##What about the less significant variables?
+logReg6 = update(logReg5,. ~ . - Animation -   Documentary - Drama - Action - Western - Cast_score  )
+summary(logReg6)
+
+#Just adding for explanations : Deviance Residuals: This is a measure of the difference between the observed response variable and the predicted response variable. The lower the deviance residuals, the better the fit of the model.
+
+#Coefficients: This provides the estimated coefficients for each predictor in the model. The "Estimate" column gives the estimated coefficient value, the "Std. Error" column gives the standard error of the coefficient estimate, the "z value" column gives the z-statistic for the coefficient, and the "Pr(>|z|)" column gives the p-value for the coefficient test. If the p-value is less than 0.05, it suggests that the predictor is statistically significant in explaining the response variable.
+
+#Null deviance and Residual deviance: The null deviance is the deviance of a null model that only has an intercept and no predictors. The residual deviance is the deviance of the fitted model. The difference between the two deviances gives us a measure of how well the model fits the data compared to the null model.
+
+#AIC: This is the Akaike Information Criterion, a measure of the goodness of fit of the model. The lower the AIC, the better the model fit.
+
+#Number of Fisher Scoring iterations: This gives the number of iterations taken by the Fisher scoring algorithm to estimate the coefficients.
+
+#This is a summary of a logistic regression model fit to predict the "goodrev" response variable in the "disney_movies" data. The table provides information about the relationship between the response variable and the predictor variables in the model.
+
+#For example, the coefficient for the Family predictor is 1.16943, which means that for a one-unit increase in the Family predictor, the log-odds of goodrev increase by 1.16943 units. The standard error of 0.20914 gives the standard deviation of the estimate of the coefficient.
+
+#What is a good rating?
+#Anything above 6 is considered a good movie?
+mvs <- mvs %>% 
+  mutate(good_movie = (W_Rating >= 6)*1)
+head(mvs)
+#Logistic Regression for good movie which is a rating higher than 6
+logReg1 = glm(good_movie~1,mvs,family=binomial)
+int     = coef(logReg1)[1]
+exp(int)/(1+exp(int))
+mean(mvs$good_movie==1)
+
+
+#(Intercept) 
+ # 0.1281527 
+#[1] 0.1281527
+
+#Around 13% of movies have ratings higher or equal to  our baseline good_movie score which is 6 when all others are constant.
+#But cleaned data shows that almost half the movies have rating 6 and remaining have around 5.??
+
+#want to check if movies longer than 106 minutes (median) have more ratings
+#Created another variable called movie_length as dummy variable
+#Condition is runtime < 106, than 0, otherwise 1
+
+mvs <- mvs %>% 
+  mutate(long_movie = (runtime >= 106)*1)
+head(mvs)
+#How is popularity defined?
+#Let's define our baseline popularity
+#Mean of Popularity = 9.491002796
+#Median of Popularity = 9.026586
+
+mvs <- mvs %>% 
+  mutate(very_pop = (popularity >= 9)*1)
+head(mvs)
+
+#Lets consider release_year as another factor which would contribute to the ratings
+#min = 1915
+#max=2017
+#median=2003
+#mode=2011
+#Lets take anything >= 2003(median) as a fairly recent movie.
+
+mvs <- mvs %>% 
+  mutate(recent_movie = (release_year >= 2003)*1)
+head(mvs)
+
+#Another regression with recent_movie as another independent variable added to our list of independent variables.
+
+logReg9 = glm(good_movie ~ Animation+Comedy+Family+Adventure+Fantasy+Drama+Romance+Action+Crime
++Thriller+History+Science.Fiction+Mystery+Horror+War+Documentary+Western+Music+TV.Movie+Foreign+long_movie+director_score+cast_score+production_score+very_pop+recent_movie+goodrev,mvs,family=binomial)
+summary(logReg9)
+
+
+#AIC: 2585.3
+#AIC decreased
+
+#Regression after removing all the non-significant variables.
+logReg10 = glm(good_movie ~ Animation+Comedy+Action+History+Science.Fiction+long_movie+director_score+cast_score+very_pop+recent_movie+goodrev,mvs,family=binomial)
+summary(logReg10)
+
+#AIC: 2577.4
+#AIC decreased after removing all the non-significant variables.
+#Used all the possible influential factors in this model and brought down the AIC score it as lowest as possible.
+#This means that:
+#Movies in the genres Animation, Comedy,  Action, History and Science.Fiction that are above/ equal to 106 minutes with TOP Directors, and TOP Cast and popularity greater than or equal to 9, which gave atleast greater revenue than or equal to 7M, and released later than year 2003. have higher ratings, in our case above 6.
+
+#Model with all the above selected influential factors.
+library(randomForest)
+rndForest = randomForest(good_movie ~Animation+Comedy+Action+History+Science.Fiction+long_movie+director_score+cast_score+very_pop+recent_movie+goodrev,mvs)
+yhat =predict(rndForest)
+mean((mvs$good_movie - yhat)^2)
+
+# Also a Good Fit for the data which Makes Sense
+
+#Should be greater than 1, for a better fit for the data.
+#Psuedo R-squared
+logReg10$deviance/logReg10$null.deviance
+
+#What about predictive accuracy?
+pred = predict(logReg10,type="response") #This is the probability that the score is a "good score"
+pred[pred>=.5] = "goodScore"
+pred[pred!="goodScore"] = "badScore"
+
+#classification matrix
+classMatrix = table(pred,mvs$good_movie) #first variable is by row, the second is by column
+classMatrix
+#Take a minute and interpret this table, what seems to be the problem? #Interpret this, is it good?
+sum(diag(classMatrix))/sum(classMatrix)
+
+#There is an 88% accuracy rate of a movie being a 'good_movie', with the above selected factors/characteristics.
+#If the accuracy is high, it means that the naive prediction was able to correctly classify a large proportion of observations in your dataset.
+
+```
+
+**Analysis/Outputs**
+
+1.	Scatter plot Popularity VS Revenue: While most popular movies have earned good revenue, there are some less popular movies that have also earned good revenue (these may be movies that were critically acclaimed, foreign language movies with a niche audience)
+
+```{r include=TRUE}
+ggplot(data = mvs,aes(x=popularity, y= revenue)) + geom_point(color='blue') + xlab("Popularity") + ylab("Revenue")
+#plt.show()
+```
+
+
+2.	Scatter plot Popularity VS Rating: Generally, popular movies tend to be highly rated. As most people watch these popular movies, they tend to receive a favorable rating
+
+```{r include=TRUE}
+ggplot(data = mvs,aes(x=popularity, y= W_Rating)) + geom_point(color='blue') + xlab("Popularity") + ylab("Rating")
+#plt.show()
+
+#mvs %>% ggplot( 
+       #aes(x=popularity, y= W_Rating, color= belongs_to_collection)) + geom_point(alpha =0.5)
+#plt.show()
+```
+
+
+
+
+
+
+
+```{r include=FALSE}
+#2 Our dependent variable of interest: Vote_average
+
+#Distribution of 'Vote_average'
+
+#hist(mvs$vote_average)
+#table(mvs$vote_average)
+#prop.table(table(mvs$vote_average))
+#mvs %>% group_by(vote_average) %>% summarise(count = n())
+
+#slow and pretty (for the manager)
+#ggplot(mvs,aes(x=vote_average)) + geom_histogram(fill="dodgerblue") + theme_bw(15) + 
+ # xlab("Vote Average") + ylab("No of movies")
+#Is this graph helpful? How else might it be displayed?
+  
+#How are the variables correlated with the rating?
+#ggcorr(bind_cols(mvs %>% select(vote_average),mvs %>% select(-vote_average)))
+#some manipulation done to put score at the bottom
+
+#From the correlation, we can understand that vote_count, vote_avg and popularity have a string positive correlation with revenue . That means , the more popular, the more votes counts and the higher the vote average is, the more likely the revenue is going to be. 
+
+#But here this correlation dos not simply mean causation. ie. even though revenue and vote_avg, vote counts and popularity have a positive correlation , it does not mean these are the things that lead to high revenue. It will be interesting to see them from further analysis.
+  
+avg_Vot = mean(mvs$vote_average)
+avg_Vot
+
+#Logistic: What is associated with a "good" voting?
+# I took the avg voting and took that as a base ( Research more on this ) 
+mvs = mvs %>% mutate(goodvot = (vote_average >= 6.2)*1)
+
+#How does model development proceed from here?
+# ( Need to interpret this, did not understand correctly)
+
+#Quick sidenote: an intercept only model
+logReg1 = glm(goodvot~1,mvs,family=binomial)
+int     = coef(logReg1)[1]
+exp(int)/(1+exp(int))
+mean(mvs$goodvot==1)
+#In an intercept only model, the intercept will lead to the mean prediction
+
+#If you take avg of all movies , and base is 6.2 then 57% of movies are giving higher than this average voting.... 
+
+#The value "0.5725971" itself is the coefficient for an intercept term in a statistical model. An intercept term is a constant value in a regression equation that represents the expected mean value of the dependent variable when all independent variables are equal to zero.
+
+
+#So, in this case, the value "0.5725971" is the estimated intercept coefficient for a regression model, indicating that when all independent variables are equal to zero, the expected value of the dependent variable is estimated to be 0.5725971.
+
+#What variables should we include? What is in our control?
+logReg2 = glm(goodvot ~ Animation+Comedy+Family+Adventure+Fantasy+Drama+Action
++Horror+Documentary+Western,mvs,family=binomial)
+summary(logReg2)
+
+
+#Looks like family,drama, action and documentary can have the biggest impact on voting
+#Remember, these are all binary, so they are directly comparable
+
+#What is the average voting with/without family,drama, action and documentary ?
+mvs %>% select(vote_average,Family,Drama,Action,Comedy) %>% group_by(Family, Drama,Action,Comedy) %>%
+  summarise(count = n(),
+            VotBar = mean(vote_average))
+# Look, here the highest voting yeilds from Drama only movies,and more counts also are from Drama movies 
+
+#here the second highest voting yeilds from comedy only movies,and more counts also are from Drama movies 
+
+
+#Which movies are we looking at?
+mvs %>% filter(Comedy == 0 | Drama == 0 |Action==0) %>% select(title) %>% distinct()
+
+#These are pretty famous movies. Are they comparable to others?
+
+#Which movies are we looking at?
+mvs %>% filter(Horror == 0 | Crime == 0 |Fantasy==0) %>% select(title) %>% distinct()
+
+# What can we interpret here ? That Crime, horror and fantasy movies are less likely to yield high revenue as they are limited to maybe, pwarticular age groups like Adventure/ Fantasy appeals more to young kids and horror to teenage / early 20s????
+
+logReg3 = update(logReg2,. ~ . -Horror - Adventure -Fantasy)
+summary(logReg3)
+        
+#What about if we add the cast score and director_score?
+logReg4 = update(logReg3,. ~ . + cast_score + director_score)
+summary(logReg4)
+
+#What about the production_score?
+logReg5 = update(logReg4,. ~ . + production_score)
+summary(logReg5)
+
+#Decide on a model:
+logRegFin = logReg5 
+#Pro tip: name the models this way you don't have to rename everything later if a different model is used later
+
+#Psuedo R-squared
+1 - logRegFin$deviance/logRegFin$null.deviance
+
+#What about predictive accuracy?
+pred = predict(logRegFin,type="response") #This is the probability that the revenue is a "above average"
+pred[pred>=6.2] = "goodvoting"
+pred[pred!="goodvoting"] = "bavoting"
+
+#classification matrix
+classMatrix = table(pred,mvs$vote_average) #first variable is by row, the second is by column
+classMatrix
+#Take a minute and interpret this table, what seems to be the problem?
+# Here, is 680 a type 2 error giving out false negatives ?? Not sure 
+
+#Psuedo R-squared
+1 - logRegFin$deviance/logRegFin$null.deviance
+#Is this good?
+
+# Explanation of Psuedo R-squared if anyone is inetersted 
+#When analyzing data with a logistic regression, an equivalent statistic to R-squared does not exist.  The model estimates from a logistic regression are maximum likelihood estimates arrived at through an iterative process.  They are not calculated to minimize variance, so the OLS approach to goodness-of-fit does not apply.  However, to evaluate the goodness-of-fit of logistic models, several pseudo R-squareds have been developed.   These are “pseudo” R-squareds because they look like R-squared in the sense that they are on a similar scale, ranging from 0 to 1 (though some pseudo R-squareds never achieve 0 or 1) with higher values indicating better model fit, but they cannot be interpreted as one would interpret an OLS R-squared and different pseudo R-squareds can arrive at very different values.  Note that most software packages report the natural logarithm of the likelihood due to floating point precision problems that more commonly arise with raw likelihoods.
+
+#If the R-squared value from such a model is .097, then the variables in your model predicted only approx 10% of the variability in the prices.So per this, this model is bad??
+
+#What about predictive accuracy?
+pred = predict(logRegFin,type="response") #This is the probability that the score is a "good score"
+pred[pred>=.5] = "goodvot"
+pred[pred!="goodvot"] = "badvot"
+
+#classification matrix
+classMatrix = table(pred,mvs$vote_average) #first variable is by row, the second is by column
+classMatrix
+#Take a minute and interpret this table, what seems to be the problem
+
+#Interpret this, is it good?
+sum(diag(classMatrix))/sum(classMatrix)
+
+#What about this?
+mean(mvs$vote_average==1)
+
+library(rpart)
+regTree = rpart(revenue ~ Western + cast_score  + director_score + production_score +Family + Drama  + Action , mvs)
+yhat    = predict(regTree)
+mean((mvs$vote_average - yhat)^2)
+
+#Random Forest
+library(randomForest)
+rndForest = randomForest(vote_average ~ Western + director_score+  production_score +Family + Drama  + Action,mvs)
+yhat =  predict(rndForest)
+mean((mvs$vote_average - yhat)^2)
+```
+
+
+**Our prediction model results in an accuracy of about 88%, allows us to generate predictions without overfitting it.**
+
+
+**Insights from analysis that influence movie ratings:**
+
+-	Most of the movies that received high ratings (above 6) were ‘long’ movies, which means they were greater than or equal to 106 minutes in length
+
+-	Most highly rated movies were directed by top 22 directors from the TMDB director’s list
+
+-	Most highly rated movies had a revenue greater than the average revenue of $9.56 million
+
+
+
+
+**Recommendations**
+
+Our goal was to build a model that could predict the success of a movie based on various factors. We found that there are several important factors that can greatly influence a movie's success. In comparison with cast and director that certainly add value, they both often come at a high cost. In our model, we found that having a great director had a stronger impact than the cast and production, which could be a balanced trade-off between expense and success factors.
+ 
+In addition, there are other good factors that contribute to the success of the movie:
+
+1) Run time between 75-150 minutes
+2) Genres:  Revenue model - Animation, Comedy, Action, History and Science Fiction
+        Rating model - Family, drama, action, and documentary 
+        Good tradeoff - Action movies
+3) Popularity: Popular movies made it to the list of high rated movies.  Thus, movies should be very well marketed or advertised 
+
+```
+
+
+```
+
+```{r include=TRUE}
+
+```
+
