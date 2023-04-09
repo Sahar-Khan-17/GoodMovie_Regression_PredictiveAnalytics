@@ -1,0 +1,909 @@
+---
+restitle: "Hw2_t1"
+author: "Sahar Khan"
+date: "1/31/2023"
+output: html_document
+---
+_________Sahar file start________________
+
+#This file contains only Cleaning
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+U
+```{r}
+library(reticulate)
+#Run only once to install
+#py_install("pandas")
+#py_install("numpy")
+#py_install("matplotlib")
+#py_install("seaborn")
+
+```
+```{python}
+import pandas as pd
+import numpy as np
+import seaborn as sns
+from ast import literal_eval
+from scipy.stats import norm
+import warnings; warnings.simplefilter('ignore')
+import matplotlib.pyplot as plt
+
+```
+#Uploading all files in seperate dataframes
+
+```{python}
+
+credits = pd.read_csv("C:/Users/khan1/OneDrive/Desktop/Classes smu/Spring 2023/Predictive analytics/Assigment1/Predictive-Analytics-master/Predictive-Analytics-master/Data/data/credits.csv")
+
+Links = pd.read_csv("C:/Users/khan1/OneDrive/Desktop/Classes smu/Spring 2023/Predictive analytics/Assigment1/Predictive-Analytics-master/Predictive-Analytics-master/Data/data/links.csv")
+
+meta_data = pd.read_csv("C:/Users/khan1/OneDrive/Desktop/Classes smu/Spring 2023/Predictive analytics/Assigment1/Predictive-Analytics-master/Predictive-Analytics-master/Data/data/movies_metadata.csv", parse_dates=['release_date'])
+#"release_date" column should be parsed as a date data type and stored in the DataFrame
+
+rating = pd.read_csv("C:/Users/khan1/OneDrive/Desktop/Classes smu/Spring 2023/Predictive analytics/Assigment1/Predictive-Analytics-master/Predictive-Analytics-master/Data/data/ratings.csv")
+
+
+```
+# #credits['cast'][0]
+```{python}
+
+meta_data.shape
+```
+#just random checking
+```{python}
+meta_data[meta_data['id'] == '110']
+```
+#the main data to work on
+```{python}
+meta_data.head()
+```
+```{python}
+meta_data['belongs_to_collection'].count()
+```
+#Merging Different Data Together
+
+```{python}
+meta_data.columns
+```
+#adding directors from credits dataframe
+# ids are in object type and in order to merge, we need it in int form
+```{python}
+credits['id'] = credits['id'].astype('int')
+credits.head()
+```
+#data has id value that is date eg : 8/20/1997, so checking it and removing
+
+```{python}
+meta_data[meta_data.id =='1997-08-20']
+```
+#removing it, in fact taking all other rows except these ones
+
+```{python}
+meta_data = meta_data[meta_data.id !='1997-08-20'] 
+meta_data = meta_data[meta_data.id !='2012-09-29'] 
+meta_data = meta_data[meta_data.id !='2014-01-01']
+```
+
+```{python}
+#merge
+meta_data['id'] = meta_data['id'].astype('int')
+meta_data = meta_data.merge(credits, on='id')
+meta_data.head()
+```
+#literal_eval is used for extracting dict values within string i.e convert to list of dict, easier to manipulate during analysis
+
+```{python}
+meta_data['cast'] = meta_data['cast'].apply(literal_eval)
+meta_data['crew'] = meta_data['crew'].apply(literal_eval)
+```
+##just the cast and crew size, that may be needed or not
+#meta_data['cast_size'] = meta_data['cast'].apply(lambda x: len(x))
+#meta_data['crew_size'] = meta_data['crew'].apply(lambda x: len(x))
+
+#function for extracting only director's name
+```{python}
+def get_director(x):
+    for i in x:
+        if i['job'] == 'Director':
+            return i['name']
+    return np.nan
+```
+
+#Extracting and seperating - director column (new created) in meta_data
+```{python}
+meta_data['director'] = meta_data['crew'].apply(get_director)
+```
+
+```{python}
+#parsing through dictionary and represent cast member(key = name)in each row
+
+meta_data['cast'] = meta_data['cast'].apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
+
+#selecting top actors - limit the cast and reduce complexity (lambda checks the length)
+
+meta_data['cast'] = meta_data['cast'].apply(lambda x: x[:5] if len(x) >=5 else x)
+```
+```{python}
+#removing space from cast and all in lower alphabets
+meta_data['cast'] = meta_data['cast'].apply(lambda x: [str.lower(i.replace(" ", "")) for i in x])
+```
+```{python}
+#saving 5 director names
+meta_data['director'] = meta_data['director'].astype('str').apply(lambda x: str.lower(x.replace(" ", "")))
+meta_data['director'] = meta_data['director'].apply(lambda x: [x])
+```
+```{python}
+#Removing crew since director data is extracted
+meta_data = meta_data.drop('crew', axis = 1)
+meta_data.head()
+```
+#Data Structuring and Organizing (meta_data)
+There are couple of variables that may not have use in our analysis. So we will be removing them.
+
+Checking what columns to remove
+
+```{python}
+meta_data['adult'].value_counts()  #removing since majority false, not useful
+#Removing imdb_id since movie id is already available
+
+```
+```{python}
+#check original_language
+meta_data['original_language'].value_counts()  #five languages. Check if need to keep them all or just english
+```
+```{python}
+#original_title (title is present), spoken_languages also need to be removed
+#checking status
+meta_data['status'].value_counts() # Considering and simplifying status to released = 45087 majority
+```
+```{python}
+#video means if dvd/cd or video version of that movie is released or not. it may add into as an additionally variable, results of which will interfer with model
+meta_data['video'].value_counts() #take all that is false and remove true rows
+```
+
+#Now starting the cleaning Process:
+
+columns to remove : 'adult' , 'imdb_id', 'homepage', 'original_title', 'spoken_languages', 'tagline'
+
+Copying Useful Variables from meta_data dataframe to movies dataframe
+
+```{python}
+movies = meta_data.drop(['adult' , 'imdb_id', 'homepage', 'original_title', 'overview', 'poster_path',
+                         'spoken_languages', 'tagline'], axis = 1)
+
+print(movies.head())
+movies.describe()
+#what are the top 5 languages
+movies['original_language'].value_counts()
+```
+#columns to select majority values : 'original_language': top 5 languages , 'status': released, 'video' : False, 'belongs_to_collection
+
+```{python}
+#selecting only top 5 Languages, rest all are 1
+movies = movies[movies['original_language'].isin(['en', 'fr', 'it','ja','de'])]
+```
+```{python}
+#status = released 
+movies = movies[movies['status'] == 'Released']
+```
+```{python}
+#Its ok to remove Triology, since individual movies are also in dataset
+movies = movies[movies['video'] == False]
+```
+```{python}
+#removing all these worked out columns.
+#Keeping belongs_to_collection for now
+#'original_language': top 5 languages , 'status': released, 'video' : False, 'belongs_to_collection'
+movies.drop(['original_language','status','video'], axis = 1, inplace = True)
+movies.head()
+```
+#Extracting Data from Long Strings in column values Columns to work on:
+#'belongs_to_collection', 'genres', 'production_companies', 'production_countries', year from 'release_date'
+
+```{python}
+#release_year from release_date
+movies['release_year'] = pd.DatetimeIndex(movies['release_date']).year
+movies.head(2)
+```
+
+```{python}
+#I was getting float value for years, so..  #errors = 'ignore', in case of missing values it will ignore them
+movies['release_year'] = movies['release_year'].astype('Int64', errors='ignore')
+movies.head(2)
+```
+#Extracting Useful Variables from JSON Strings
+
+```{python}
+#extracting genres
+movies.genres[0:5][0]
+```
+```{python}
+#extract and seperate genres
+movies['genres'] = movies['genres'].fillna('[]').apply(literal_eval).apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
+movies.head(2)
+```
+```{python}
+#production_companies
+movies['production_companies'] = movies['production_companies'].fillna('[]').apply(literal_eval).apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
+movies['production_companies'] = movies['production_companies'].apply(lambda x: x[:1] if len(x) >=1 else x)
+```
+```{python}
+movies['production_countries'] = movies['production_countries'].fillna('[]').apply(literal_eval).apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
+movies['production_countries'] = movies['production_countries'].apply(lambda x: x[:1] if len(x) >=1 else x)
+movies.head(2)
+```
+```{python}
+#converting belongs_to_collection to bool 1 & 0. If collection = 1 else 0
+movies['belongs_to_collection'] = (movies['belongs_to_collection'].isna()).astype(int)
+movies.head()
+```
+#Data Cleaning
+
+```{python}
+#checking missing values in data 
+movies.isna().sum()
+
+#since these are small values, we can remove these rows
+```
+```{python}
+movies.dropna(inplace = True)
+movies.isna().sum()
+```
+```{python}
+#checking stats for outliers in continuous values
+movies[['budget','popularity','revenue','runtime','vote_average','vote_count']].agg(['std','min','mean','max','skew','kurtosis'])
+
+```
+```{python}
+#there are some dodgy values or outliers to resolve in popularity, budget, runtime, vote_count
+#start from popularity to check what values do we have and their type
+(movies['popularity'].values)
+```
+#The values in popularity column have messed up data types. We see some float and some are string. We need to make all numerical values to be float
+
+```{python}
+movies['popularity'] = movies['popularity'].astype("float")
+print(movies['popularity'].values)
+```
+
+```{python}
+#checking popularity scale now
+movies['popularity'].describe()  # its from zero to 547 with mean 6.92
+```
+```{python}
+#lets check out these super popular movie 547.488 score
+movies[movies['popularity']> 35]  
+#there are small number of movies above that popularity (40).
+#so instead of making them outlier, set them all to 40
+# all of them are popular,renowned movies
+
+```
+```{python}
+#lower and upper bounds of a confidence interval 
+movies.popularity.mean() - movies.popularity.std() * 2, movies.popularity.mean() + movies.popularity.std() * 2
+
+```
+```{python}
+#setting all movies with popularity above 35 to 35
+movies[movies['popularity'] > movies['popularity'].quantile(0.997)] = 35  #int(movies['popularity'].quantile(0.997))
+movies.popularity.describe()
+```
+
+```{python}
+#lets look into next column: budget
+movies['budget'].value_counts()   
+
+#30K+ zeroes out of 45K data
+```
+```{python}
+#same problem and hence same solution
+movies['budget'] = movies['budget'].astype(float)
+#int because huge numerical values. no need to burden memory by using float here
+print(movies['budget'].values)
+```
+#Now, there is possibility to create a movie with 0 budget, but not in real world so we have to look into this problem. 
+
+```{python}
+movies['budget'].describe() #check which movies have budget 0
+```
+ 
+```{python}
+#checking our 2std or outlier range-lower and upper bounds of a confidence interval 
+movies.budget.mean() - (2 * movies.budget.std()) , movies.budget.mean() + 2 * movies.budget.std()
+```
+#The budget values in these records are not true which I checked online. The budget for them is not zero. So we may have to remove them from our record. (Check home Alone 4 and The human Centipede 2)
+
+```{python}
+#movies['budget'] = movies[movies['budget'] < 1 ]
+movies = movies[movies['budget'] > 1] 
+movies.head()
+```
+```{python}
+sns.distplot(x = movies.budget, kde = True, fit = norm)
+plt.show()
+```
+#Removing Budget here
+
+```{python}
+movies = movies.drop('budget', axis = 1)
+movies.head()
+```
+```{python}
+#check column: runtime. it seems fine but lets check it
+movies['runtime'].describe()
+movies[[ 'runtime','vote_average','vote_count']].agg(['std','min','mean','max','skew','kurtosis'])
+#there are movies that are longer than 3 hours and max is 476 min (~8 hours). lets check what is that thing
+#also, a movie is also zero minute which is obviously not a movie but an outlier
+```
+```{python}
+movies = movies[movies['runtime'] > 30]
+movies['runtime'].describe()
+```
+```{python}
+#usually a movie is within 180 min or 3 hours. lets allow more liberty to older movies to have more than that time
+#lets see if a movie is longer than 3.5 hours or 60*3.5 = 210
+movies[movies['runtime'] > 240]
+```
+```{python}
+#Leviathan: The Story of Hellraiser and Hellbound: Hellraiser II has runtime : 476 min
+#and its true, I verified it online on imdb and this cant be taken as outlier
+#and same is true for some other movies too. data is correct and we cant take them as outlier
+
+#lets see distribution of runtime and figure out something from there
+sns.distplot(movies['runtime'].values)
+plt.show()
+```
+
+```{python}
+from scipy.stats import norm
+ax = sns.distplot(movies['runtime'], fit=norm, kde=False)
+plt.show()
+```
+```{python}
+#probably we will need to put a cut off limit at 200, since 99.7% (3*std) of data lies within 30 to 190 min
+
+movies = movies[movies['runtime'] < 240]
+movies['runtime'].describe()
+```
+
+
+
+```{python}
+#Checking vote_average
+movies['vote_average'].describe()  
+```
+```{python}
+#checking vote_count
+movies['vote_count'].describe()
+```
+
+
+```{python}
+
+print(movies['revenue'].describe())
+#removing outlier in this one
+#checking dist of it
+sns.distplot(movies['revenue'], fit = norm, kde = False) #left skewed
+plt.show()
+
+```
+#the results of revenue col  are lot of values around 0 . lets check data limits/range
+
+```{python}
+movies['revenue'].mean() - (2 * movies['revenue'].std()) , movies['revenue'].mean() + (2 * movies['revenue'].std())
+
+```
+```{python}
+movies[movies.revenue < 1]['revenue'].count()  # 2800+ values are zeros
+```
+```{python}
+movies = movies[movies.revenue > 1000000]
+#dropping revenues
+```
+#removed all rows where budget was zero  
+
+```{python}
+movies.revenue.describe()  #Now ok
+```
+#Checking Outliers Again
+
+```{python}
+#checking stats for outliers in continuous values
+movies[['popularity','revenue','runtime','vote_average','vote_count']].agg(['std','min','mean','max','skew','kurtosis'])
+```
+
+
+```{python}
+movies.head() 
+```
+#Feautre Engineering
+#Opening Up List with Single Values
+#production_companies , production_countries and director
+
+```{python}
+movies.production_companies = movies.production_companies.str[0]
+movies.production_countries = movies.production_countries.str[0]
+movies.director = movies.director.str[0]
+
+movies.head(10)
+```
+#Creating New Column Called cast_score¶
+#(Based on Number of Big Actors in a Movie)
+
+```{python}
+#list of actors
+actors = ['tomhanks', 'alpacino','robertdeniro','leonardodicaprio','jimcarrey','brucewillis',
+         'johnnydepp','bradpitt','clinteastwood','willsmith','denzelwashington','tomcruise',
+         'nicolascage','keanureeves','danielday-lewis','anthonyhopkins','robinwilliams','morganfreeman',
+         'christianbale','hughjackman','mattdamon','woodyallen','jacknicholson','marlonbrando','dustinhoffman',
+         'paulnewman','spencertracy','jacklemmon','michaelcaine','jamesstewart','robertduvall','seanpenn',
+         'jeffbridges','genehackman','charleschaplin','benkingsley','russelcrowe','kevinspacey',
+         'tommyleejones','seanconnery','christopherwalken','heathledger','jamiefoxx','joaquinphoenix',
+         'colinfirth','matthewmcconaughey','garyoldman','edwardnorton','robertdowneyjr','liamneeson','melgibson',
+         'harrisonford','samueljackson','benaffleck','ryangosling','ryanreynolds','jenniferlawrence','scarlettjohansson',
+         'cateblanchett','jenniferaniston','galgadot','salmahayek','katewinslet','angelinjolie','annehathaway',
+         'melissamccarthy','jackiechan','willferrell','dwaynejohnson','vandiesel','chadwickboseman']
+```
+
+```{python}
+#extract match count
+def match_count(hero):
+    if hero in actors:
+        return 1
+    else: 
+        return 0
+
+```
+```{python}
+#copying movie data for experiments
+cast_mv = movies.copy() 
+cast_mv['cast_score'] = [0] * cast_mv.shape[0] #new col, initial value=0
+
+
+        
+#For each row, it calculates the length of the "cast". The match_count function is called on each element of the "cast" column and the result is added to the "cast_score" for the corresponding row. The value in the "cast_score" column is updated using the at method of the data frame.
+```
+```{python}
+
+for index,row in cast_mv.iterrows():
+    length = len((row['cast']))
+    for i in range(length):
+        val = match_count((row['cast'][i]))
+        cast_mv.at[index, 'cast_score' ] += val
+        
+```
+```{python}
+
+cast_mv.cast_score.value_counts()
+```
+```{python}
+cast_mv.isna().sum() 
+```
+#For Directors, creating director score (same process as above)
+#We will create binary column telling us if a movie has a renonwed director or not
+
+```{python}
+#directors =[]
+cast_mv[cast_mv.director == 'paulthomasanderson']
+```
+```{python}
+directors =['ridleyscott','clinteastwood','martinscorsese','paulthomasanderson','davidfincher','joelcoen',
+           'davidlynch','christophernolan','alexanderpayne','michaelhaneke','stevenspielberg','romanpolanski',
+           'peterjackson','anglee','quentintarantino','darrenaronofsky','davidcronenberg','larsvontrier','mikeleigh',
+           'jamescameron','dannyboyle','woodyallen']
+```
+```{python}
+def director_match(drc):
+    if drc in directors:
+        return 1
+    else:
+        return 0
+```
+```{python}
+cast_mv['director_score'] = [0] * cast_mv.shape[0]
+
+for index,row in cast_mv.iterrows():
+    v = director_match(row['director'])
+    cast_mv.at[index, 'director_score' ] += v
+       
+       
+
+cast_mv['director_score'].value_counts()
+```
+#Production Company Score
+#For big production houses, we will assign 1 and for smaller 0
+
+```{python}
+companies =['Warner Bros','Sony Pictures Animation','Sony Pictures Entertainment','Walt Disney','Universal Pictures',
+           'Walt Disney Animation Studios','Walt Disney Pictures','Twentieth Century Fox Animation','Columbia Pictures',
+           'Universal Pictures', 'Twentieth Century Fox Film Corporation','DreamWorks Animation','Miramax Films','Pixar Animation Studios',
+           'DreamWorks SKG','DC Entertainment']
+```
+```{python}
+def company_match(c):
+    if c in companies:
+        return 1
+    else:
+        return 0
+```
+```{python}
+cast_mv['production_score'] = [0] * cast_mv.shape[0]
+
+for index,row in cast_mv.iterrows():
+    v = company_match(row['production_companies'])
+    cast_mv.at[index, 'production_score' ] += v
+    
+```
+```{python}
+cast_mv.head(2)
+```
+#One Hot Encoding are character/factor/categorical variables
+
+```{python}
+#gen_movies.genres.values
+```
+```{python}
+gen_movies = cast_mv.copy()
+#try is for one hot encoding to check
+for index,row in gen_movies.iterrows():
+    for genre in row.genres:
+        gen_movies.at[index, genre] = 1
+        print(gen_movies.at[index,genre])
+gen_movies=gen_movies.fillna(0)
+ 
+```
+
+```{python}
+gen_movies=gen_movies.fillna(0)
+gen_movies.head()
+```
+
+```{python}
+cast_mv = gen_movies.copy()
+```
+
+
+#Creating Our Y Variable: Weighted Rating
+#I found this formula online on Kaggle: (Its imdb weighted rating formula and I will be using some help from here, because i like that approach)
+
+#𝑊𝑒𝑖𝑔ℎ𝑡𝑒𝑑𝑅𝑎𝑡𝑖𝑛𝑔(𝑊𝑅)=(𝑣/(𝑣+𝑚).𝑅)+(𝑚/(𝑣+𝑚).𝐶) 
+#where,
+
+#v is the number of votes for the movie
+#m is the minimum votes required to be listed in the chart. We will keep 99.7% of values (3 * std)
+#R is the average rating of the movie
+#C is the mean vote across the whole report
+
+```{python}
+#Convert datatype of cols: vote_count and vote_average into int 
+
+#and find m = minium votes required to be listed on chart. 
+#we will use 3 std values as we did above earlier
+m = cast_mv[cast_mv['vote_count'].notnull()]['vote_count'].astype('int').quantile(0.997)
+
+#and our mean of vote_average
+C = cast_mv[cast_mv['vote_average'].notnull()]['vote_average'].astype('int').mean()
+
+
+print("cut off value: ",m)
+print("Mean of vote_average column: ",C)
+```
+```{python}
+def weighted_rating(x):
+    v = x['vote_count']
+    R = x['vote_average']
+    return (v/(v+m) * R) + (m/(m+v) * C)
+
+cast_mv['W_Rating'] = cast_mv.apply(weighted_rating, axis=1)
+cast_mv = cast_mv.sort_values('W_Rating', ascending=False)
+```
+#Our rating and ranking will be based on this new col: W_Rating
+
+```{python}
+cast_mv.W_Rating.describe()
+
+```
+#Final Cleaning¶
+#Removing all unwanted variables
+
+```{python}
+cast_mv.columns
+```
+```{python}
+cast_mv = cast_mv.drop(['id','release_date','genres'] , axis = 1)  #production_countries, production_companies, dir
+```
+# I think that the CSV conversion, so I commneted it
+```{python}
+#cast_mv.to_csv("C:/Users/khan1/OneDrive/Desktop/Classes smu/Spring 2023/Predictive analytics/Assigment1/Predictive-Analytics-master/Predictive-Analytics-master/Data/data/final_cleaned_HW2")
+
+#rename the file (.csv) in the location to open it as csv
+```
+
+
+```{r, include = FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+library(car)
+library(broom)
+library(GGally)
+library(psych)
+library(purrr)
+
+library(e1071)
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+library(pROC)
+library(ROCit)
+library(psych)
+
+library(regclass)
+library(rpart)
+library(rpart.plot)
+library(splitstackshape)
+library(caTools)
+library(reticulate)
+library(sjPlot)
+
+
+```
+
+# Understanding the Analysis
+## *Movie Classification*
+IMDB scale ranges from 1-10 , To determine whether a movie is good or bad, any movie with a rating greater than or equal to 6 is considered a good movie, otherwise it is classified as a bad movie.
+Yet to classsify it: TO DO
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+## Marginal effects
+
+
+mvs <- read.csv("C:/Users/khan1/OneDrive/Desktop/Classes smu/Spring 2023/Predictive analytics/Assigment1/Predictive-Analytics-master/Predictive-Analytics-master/Data/data/final_cleaned_HW2")
+
+names(mvs)[1] <- 'id'
+mov <- mvs %>%  mutate(good_movie = if_else(mvs$W_Rating >= 6, 1, 0))
+head(mvs,20)
+```
+
+
+
+```{r include=FALSE}
+ggplot(data = mvs, 
+       aes(x=runtime, y= W_Rating)) +
+  geom_point(color='darkblue')
+```
+```{r include=FALSE}
+
+mvs %>% ggplot( 
+       aes(x=popularity, y= W_Rating, color= belongs_to_collection)) + geom_point(alpha =0.5)
+Plt.show()
+```
+
+
+
+
+
+
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+str(mvs)
+```
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+summary(mvs)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+describe(mvs)
+```
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+list <- colnames(mvs[,c(2,3,6,7,14,15,16,37)])
+list
+```
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+head(mvs[list])
+```
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+multi.hist(mvs[list], nrow=3,ncol=3,global=FALSE)
+```
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+list2 <- colnames(mvs[,c(2,3,6,7,14,15,16,37)])
+```
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+plot(mvs$popularity,mvs$revenue) #More Popular movies have earned good revenue, some less popular movies also earned good revenue. However, the data undermines time factor in assessing the revenue. 
+```
+
+ 
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+ 
+
+plot(mvs$vote_count,mvs$W_rating) #Many movies that have fewer votes are having a very high rating
+```
+ 
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+
+
+plot(mvs$popularity,mvs$W_Rating)
+
+#popular movies have high ratings
+```
+
+#Training dataset
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+#Create a new dataframe based on the specific cols we intended to input in our following model
+
+df <- mvs[,c("goodscore", "belongs_to_collection", "popularity","runtime", "cast_score", "director_score","production_score")]
+str(df)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+#This step we partition the data into a training set (70%) and a validation set (30%)
+
+set.seed(1234)
+split <- sample.split(df, SplitRatio = 0.7)
+train_data1 <- subset(df, split == "TRUE")
+test_data1 <- subset(df, split == "FALSE")
+```
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+#Based on the training data build logistic model 
+
+
+logit <- glm(good_movie~., data = train_data1, family = "binomial")
+summary(logit)
+```
+
+
+ 
+ 
+
+```
+## Regression Analysis
+
+
+```{r, out.width = "300px", out.height="300px",fig.align = 'center'}
+
+```{r}
+#plotting the predicted probabilities of a logistic regression model using the plot_model() function.
+library(sjPlot)
+plot_model(logit,transform = "plogis", show.values = TRUE, value.offset = .3, title = "Probability of Occurences")
+```
+
+#The star actorsin the movie, the director, and the producers of the movie have a significant influence on the success of themovie by 56% , 74%, and 57% respectively.
+```
+
+
+#Need to check intercept and analyze the factors like given in week4. TO DO left
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+tidy(logit) %>% mutate(estimate = round(estimate,2),
+                         statistic = round(statistic,2),
+                         p.value = round(p.value,3),
+                         std.error = NULL)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+
+# This step provide the testing for the logit model as well as roc statistics
+
+p_glm <- predict(logit,newdata = test_data1)
+roc(test_data1$good_movie,p_glm)
+plot(roc(test_data1$good_movie,p_glm))
+```
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+
+# Confusion Matrix
+
+confusionmatrix<- confusion_matrix(logit,test_data1)
+confusionmatrix
+```
+
+
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+
+#This step we provide the accuracy, misclassification rate, true positive rate, false positive rate, specificity, precision, and prevalence statistics.
+
+classifications <- predict(logit,newdata=test_data1)
+#confusionmatrix <- confusion_matrix(classifications,test_data1$good_movie, positive = "1")
+nb_cm <- data.frame(matrix(ncol = 1,nrow = 4))
+rownames(nb_cm) <- c('accuracy', 'misclassification', 'specificity', 'precision')
+
+#double check if the values are entered as per forumla :https://classeval.wordpress.com/introduction/basic-evaluation-measures/#:~:text=Specificity%20(SP)%20is%20calculated%20as,whereas%20the%20worst%20is%200.0.
+
+colnames(nb_cm) <- 'values'
+nb_cm['accuracy',1] <- (1605+73)/1886
+nb_cm['misclassification',1] <- 1 - ((1605+73)/1886)
+nb_cm['specificity',1] <- 1605/(1605+40)
+nb_cm['precision',1] <- 73/(73+40)
+
+
+nb_cm
+
+# note that, all the 7 variables used in the model aobve are significant because their p-values are less than 0.05 significant level.
+#  model accuracy to above 88%, we can say its not overfitting
+
+```
+
+
+ 
+```{r}
+plot <- mvs %>% ggplot( 
+       aes(x=popularity, y= W_Rating, color= good_movie)) + geom_point(alpha =0.5)
+
+plot+scale_color_gradient2(midpoint=0.5, low="brown", high = "blue")+ xlab("Popularity") +ylab("Rating")
+
+```
+ 
+
+Another interesting observation we thought was worth mentioning; There are many movies that have very high popularity but have very low ratings and vice versa.   
+
+```{r, message=FALSE, warning=FALSE, fig.show='hide', results='hide'}
+reglog <- glm(good_movie~belongs_to_collection+popularity+runtime+cast_score+director_score+production_score,data=df,family='binomial')
+summary(reglog)
+```
+
+
+
+
+-----------------Sahar file ends -------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
